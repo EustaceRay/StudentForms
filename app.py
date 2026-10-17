@@ -13,6 +13,6 @@ app.register_blueprint(konstantin)
 def index():
     return render_template("index.html")
 
-
+## Конфликту быть 1
 if __name__ == "__main__":
     app.run(debug=True)
