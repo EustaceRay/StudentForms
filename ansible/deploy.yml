@@ -1,0 +1,103 @@
+
+---
+- name: Deploy StudentForms application
+  hosts: webservers
+  become: true
+
+  vars:
+    app_user: student
+    app_dir: /opt/studentforms
+    app_repo: "https://github.com/EustaceRay/StudentForms.git"
+    app_port: 8000
+
+  tasks:
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-venv
+          - python3-pip
+          - git
+        state: present
+        update_cache: true
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: Download application from GitHub
+      ansible.builtin.git:
+        repo: "{{ app_repo }}"
+        dest: "{{ app_dir }}"
+        version: main
+        update: true
+      become_user: "{{ app_user }}"
+      notify: Restart StudentForms
+
+    - name: Create Python virtual environment
+      ansible.builtin.command:
+        cmd: "python3 -m venv {{ app_dir }}/venv"
+        creates: "{{ app_dir }}/venv/bin/python"
+      become_user: "{{ app_user }}"
+
+    - name: Install Python requirements
+      ansible.builtin.pip:
+        requirements: "{{ app_dir }}/requirements.txt"
+        virtualenv: "{{ app_dir }}/venv"
+      become_user: "{{ app_user }}"
+
+    - name: Install Gunicorn
+      ansible.builtin.pip:
+        name: gunicorn
+        virtualenv: "{{ app_dir }}/venv"
+      become_user: "{{ app_user }}"
+
+    - name: Create systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/studentforms.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=StudentForms Flask Application
+          After=network.target
+
+          [Service]
+          User={{ app_user }}
+          WorkingDirectory={{ app_dir }}
+          ExecStart={{ app_dir }}/venv/bin/gunicorn --workers 1 --bind 0.0.0.0:{{ app_port }} app:app
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart StudentForms
+
+    - name: Start and enable service
+      ansible.builtin.systemd_service:
+        name: studentforms
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Apply pending restarts
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check application response
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_port }}/"
+        status_code: 200
+      register: app_check
+      retries: 10
+      delay: 2
+      until: app_check.status == 200
+
+  handlers:
+    - name: Restart StudentForms
+      ansible.builtin.systemd_service:
+        name: studentforms
+        state: restarted
+        daemon_reload: true
