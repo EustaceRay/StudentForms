@@ -9,44 +9,63 @@ pipeline {
 
     environment {
         IMAGE_NAME = 'studentforms'
-        CONTAINER_NAME = 'studentforms-app'
+        SERVER_IP = '192.168.56.102'
     }
 
     stages {
+
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/EustaceRay/StudentForms.git'
+                checkout scm
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t studentforms:latest .'
-            }
-        }
-
-        stage('Deploy Container') {
-            steps {
                 sh '''
-                    docker rm -f studentforms-app || true
-
-                    docker run -d \
-                      --name studentforms-app \
-                      --restart unless-stopped \
-                      -p 5000:5000 \
-                      studentforms:latest
+                    docker build \
+                      -t ${IMAGE_NAME}:${BUILD_NUMBER} .
                 '''
             }
         }
 
-        stage('Check Application') {
+        stage('Save Docker Image') {
             steps {
                 sh '''
-                    sleep 3
-                    curl --fail http://127.0.0.1:5000/
+                    docker save \
+                      -o studentforms.tar \
+                      ${IMAGE_NAME}:${BUILD_NUMBER}
                 '''
             }
+        }
+
+        stage('Deploy with Ansible') {
+            steps {
+                sshagent(credentials: ['ubuntu-deploy-key']) {
+                    sh '''
+                        ansible-playbook \
+                          -i ansible/inventory_lab5.ini \
+                          ansible/deploy_docker.yml \
+                          -e "image_archive=${WORKSPACE}/studentforms.tar" \
+                          -e "image_tag=${BUILD_NUMBER}"
+                    '''
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                    curl --fail \
+                      http://${SERVER_IP}:5000/
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            sh 'rm -f studentforms.tar'
         }
     }
 }
